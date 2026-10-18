@@ -2,7 +2,7 @@
 #[allow(clippy::module_inception)]
 mod bridge_tests {
     use crate::bridge::{BridgeProtocol, WrappedTokenInfo, MIN_BRIDGE_CONFIRMATIONS};
-    use crate::{EscrowContract, EscrowContractClient, EscrowError};
+    use crate::{DataKey, EscrowContract, EscrowContractClient, EscrowError};
     use soroban_sdk::{
         testutils::{Address as _, Events},
         Address, Env, String, Symbol, TryFromVal, Val,
@@ -179,6 +179,80 @@ mod bridge_tests {
                 .get_bridge_confirmation(&transfer_token)
                 .unwrap()
                 .is_finalized
+        );
+    }
+
+    #[test]
+    fn test_bridge_confirmation_rejects_regression_and_keeps_finalized_state() {
+        let (env, _, client) = setup();
+        let token = Address::generate(&env);
+
+        client.update_bridge_confirmation(&token, &BridgeProtocol::Wormhole, &20);
+        let result = client.try_update_bridge_confirmation(&token, &BridgeProtocol::Wormhole, &19);
+
+        assert_eq!(result, Err(Ok(EscrowError::BridgeConfirmationRegression)));
+        let confirmation = client.get_bridge_confirmation(&token).unwrap();
+        assert_eq!(confirmation.confirmations, 20);
+        assert!(confirmation.is_finalized);
+    }
+
+    #[test]
+    fn test_bridge_finality_errors_distinguish_missing_and_pending_records() {
+        let (env, _, client) = setup();
+        let missing = Address::generate(&env);
+        let pending = Address::generate(&env);
+
+        assert_eq!(
+            crate::bridge::require_bridge_finalized(&env, &missing),
+            Err(EscrowError::BridgeConfirmationMissing)
+        );
+
+        client.update_bridge_confirmation(
+            &pending,
+            &BridgeProtocol::Allbridge,
+            &(MIN_BRIDGE_CONFIRMATIONS - 1),
+        );
+        assert_eq!(
+            crate::bridge::require_bridge_finalized(&env, &pending),
+            Err(EscrowError::BridgeConfirmationPending)
+        );
+    }
+
+    #[test]
+    fn test_bridge_admin_paths_reject_missing_incorrect_and_stale_authority() {
+        let (env, admin, client) = setup();
+        let outsider = Address::generate(&env);
+        let bridge = Address::generate(&env);
+        let token = Address::generate(&env);
+        let info = make_wrapped_token_info(&env, token, true);
+
+        assert_eq!(
+            client.try_set_wormhole_bridge(&outsider, &bridge),
+            Err(Ok(EscrowError::E4))
+        );
+        assert_eq!(
+            client.try_register_wrapped_token(&outsider, &info),
+            Err(Ok(EscrowError::E4))
+        );
+
+        // An empty auth set simulates a missing signature for the current admin.
+        assert!(client
+            .mock_auths(&[])
+            .try_set_wormhole_bridge(&admin, &bridge)
+            .is_err());
+
+        // Restore the fixture's broad authorization so the following assertion
+        // reaches the contract's stale-admin authorization boundary.
+        env.mock_all_auths();
+
+        // A previously valid admin becomes stale after an administrative rotation.
+        let replacement = Address::generate(&env);
+        env.as_contract(&client.address, || {
+            env.storage().instance().set(&DataKey::Admin, &replacement);
+        });
+        assert_eq!(
+            client.try_set_wormhole_bridge(&admin, &bridge),
+            Err(Ok(EscrowError::E4))
         );
     }
 

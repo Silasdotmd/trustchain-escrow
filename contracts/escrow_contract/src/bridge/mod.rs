@@ -97,9 +97,9 @@ pub fn validate_escrow_token(env: &Env, token: &Address) -> Result<(), EscrowErr
 
 /// Validate that a bridge transfer is finalized (>= MIN_BRIDGE_CONFIRMATIONS).
 pub fn require_bridge_finalized(env: &Env, token: &Address) -> Result<(), EscrowError> {
-    let conf = get_bridge_confirmation(env, token).ok_or(EscrowError::E54)?;
+    let conf = get_bridge_confirmation(env, token).ok_or(EscrowError::BridgeConfirmationMissing)?;
     if !conf.is_finalized {
-        return Err(EscrowError::E54);
+        return Err(EscrowError::BridgeConfirmationPending);
     }
     Ok(())
 }

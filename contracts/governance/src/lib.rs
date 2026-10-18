@@ -751,6 +751,11 @@ impl GovernanceContract {
     /// Percentage of stake slashed on misconduct (10%).
     const SLASH_PERCENT: i128 = 10;
 
+    /// Evidence is stored in the slashing event, so keep it bounded to avoid
+    /// unbounded event resources while still accommodating content-addressed
+    /// references such as IPFS CIDs and concise operator descriptions.
+    const MAX_SLASH_EVIDENCE_BYTES: u32 = 256;
+
     /// Stake tokens to register as an arbitrator candidate.
     ///
     /// The caller transfers `amount` tokens to this contract.
@@ -903,6 +908,10 @@ impl GovernanceContract {
         let admin = Storage::admin(&env)?;
         if caller != admin {
             return Err(GovError::AdminOnly);
+        }
+
+        if reason.is_empty() || reason.len() > Self::MAX_SLASH_EVIDENCE_BYTES {
+            return Err(GovError::InvalidSlashEvidence);
         }
 
         let stake: i128 = env
@@ -1410,6 +1419,49 @@ mod arbitrator_stake_tests {
         );
         assert_eq!(stored_stake(&env, &client, &arbitrator), Some(2_000));
         assert_eq!(token::Client::new(&env, &token).balance(&recipient), 0);
+    }
+
+    #[test]
+    fn slash_evidence_fuzz_corpus_rejects_malformed_inputs_without_mutation() {
+        let (env, admin, token, client) = setup();
+        let arbitrator = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        fund_and_stake(&env, &token, &client, &arbitrator, 2_000);
+
+        let malformed = [
+            String::from_str(&env, ""),
+            String::from_bytes(
+                &env,
+                &[b'x'; (GovernanceContract::MAX_SLASH_EVIDENCE_BYTES + 1) as usize],
+            ),
+        ];
+        for evidence in malformed {
+            assert_eq!(
+                client.try_slash_arbitrator(&admin, &arbitrator, &recipient, &evidence),
+                Err(Ok(GovError::InvalidSlashEvidence))
+            );
+            assert_eq!(stored_stake(&env, &client, &arbitrator), Some(2_000));
+            assert_eq!(token::Client::new(&env, &token).balance(&recipient), 0);
+        }
+    }
+
+    #[test]
+    fn slash_evidence_boundary_at_maximum_length_preserves_slashing_invariants() {
+        let (env, admin, token, client) = setup();
+        let arbitrator = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        fund_and_stake(&env, &token, &client, &arbitrator, 2_000);
+        let evidence = String::from_bytes(
+            &env,
+            &[b'e'; GovernanceContract::MAX_SLASH_EVIDENCE_BYTES as usize],
+        );
+
+        assert_eq!(
+            client.slash_arbitrator(&admin, &arbitrator, &recipient, &evidence),
+            200
+        );
+        assert_eq!(stored_stake(&env, &client, &arbitrator), Some(1_800));
+        assert_eq!(token::Client::new(&env, &token).balance(&recipient), 200);
     }
 
     // ── #433: event completeness for arbiter staking withdrawal ──────────────

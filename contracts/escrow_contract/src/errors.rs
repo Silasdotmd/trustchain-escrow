@@ -122,6 +122,12 @@ pub enum EcErr {
     DexNotConfigured = 97,
     /// The arbiter fee in basis points is invalid.
     ArbiterFeeBpsInvalid = 98,
+    /// No bridge confirmation has been recorded for this wrapped token.
+    BridgeConfirmationMissing = 99,
+    /// The bridge confirmation exists but has not reached finality.
+    BridgeConfirmationPending = 100,
+    /// A confirmation update attempted to lower the observed count.
+    BridgeConfirmationRegression = 101,
 }
 
 /// Backward-compatible alias — existing code imports `EscrowError`; the oracle

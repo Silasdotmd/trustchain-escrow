@@ -1583,6 +1583,11 @@ impl EscrowContract {
         confirmations: u32,
     ) -> Result<(), EscrowError> {
         ContractStorage::require_initialized(&env)?;
+        if let Some(current) = bridge::get_bridge_confirmation(&env, &token) {
+            if current.bridge == bridge_protocol && confirmations < current.confirmations {
+                return Err(EscrowError::BridgeConfirmationRegression);
+            }
+        }
         let is_finalized = confirmations >= bridge::MIN_BRIDGE_CONFIRMATIONS;
         let conf = bridge::BridgeConfirmation {
             token: token.clone(),

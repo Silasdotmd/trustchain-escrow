@@ -56,4 +56,8 @@ pub enum GovError {
 
     // Arithmetic
     ArithmeticOverflow = 35,
+
+    // Slashing evidence
+    /// Evidence must be a non-empty, bounded on-chain reference.
+    InvalidSlashEvidence = 36,
 }
